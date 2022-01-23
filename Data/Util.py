@@ -6,6 +6,7 @@ class Util:
     def __init__(self, inWidth, inHeight):
         self.inWidth = inWidth
         self.inHeight = inHeight
+        self.cutContours = [[]] * 8
         
     def findStartAndEnd(self, contourPoints, targetPoint, startPoint, endPoint):
       w, h = targetPoint
@@ -119,6 +120,58 @@ class Util:
         
         return partContour
 
+    def getPartContour2(self, poseLine, contourPoints, index):
+        pointPartStart, pointPartEnd = poseLine
+        
+        startPointRange = self.findStartAndEnd(contourPoints, pointPartStart, pointPartStart, pointPartEnd)
+        startPointStartIndex = startPointRange[0][0]
+        startPointEndIndex = startPointRange[1][0]
+        startPointCutContour = self.getInterpolatePoints(contourPoints[startPointStartIndex], contourPoints[startPointEndIndex])
+        
+        endPointRange = self.findStartAndEnd(contourPoints, pointPartEnd, pointPartStart, pointPartEnd)
+        endPointStartIndex = endPointRange[0][0]
+        endPointEndIndex = endPointRange[1][0]
+        endPointCutContour = self.getInterpolatePoints(contourPoints[endPointStartIndex], contourPoints[endPointEndIndex])
+        
+        self.cutContours[index] = startPointCutContour
+        self.cutContours[index + 1] = endPointCutContour
+        
+        partUpperContour = []
+        partUpperContour.extend(startPointCutContour)
+        
+        # print("startPoint startIndex: %d endIndex: %d" % (startPointStartIndex, startPointEndIndex))
+        # print("endPoint startIndex: %d endIndex: %d" % (endPointStartIndex, endPointEndIndex))
+        
+        if startPointEndIndex - startPointStartIndex < len(contourPoints) / 2:
+          partUpperContour.extend(contourPoints[endPointEndIndex:startPointEndIndex])
+          partUpperContour.extend(endPointCutContour)
+          partUpperContour.extend(contourPoints[startPointStartIndex:endPointStartIndex])
+        else:
+          if endPointEndIndex < startPointStartIndex:
+              partUpperContour.extend(contourPoints[startPointEndIndex:])
+              partUpperContour.extend(contourPoints[:endPointStartIndex])
+              partUpperContour.extend(endPointCutContour)
+              partUpperContour.extend(contourPoints[endPointEndIndex:startPointStartIndex])
+          elif endPointStartIndex > startPointEndIndex: 
+              partUpperContour.extend(contourPoints[startPointEndIndex:endPointStartIndex])
+              partUpperContour.extend(endPointCutContour)
+              partUpperContour.extend(contourPoints[endPointEndIndex:])
+              partUpperContour.extend(contourPoints[:startPointStartIndex])
+          else: 
+              partUpperContour.extend(contourPoints[startPointEndIndex:endPointEndIndex])
+              partUpperContour.extend(endPointCutContour)
+              partUpperContour.extend(contourPoints[endPointStartIndex:startPointStartIndex])
+        
+        partLowerContour = []
+        partLowerContour.extend(endPointCutContour)
+        if endPointEndIndex - endPointStartIndex < len(contourPoints) / 2:
+            partLowerContour.extend(contourPoints[endPointStartIndex:endPointEndIndex])
+        else: 
+            partLowerContour.extend(contourPoints[endPointEndIndex:])
+            partLowerContour.extend(contourPoints[:endPointStartIndex])
+              
+        return partUpperContour, partLowerContour
+    
     def getBodyContour(self, poseLines, contourPoints):
         def inInterval(target, start, end, length):
           if end - start < length / 2:
@@ -127,12 +180,12 @@ class Util:
             return target > end or target < start
 
         intervals = []
-        self.cutContours = []
+        cutContours = []
         for poseLine in poseLines:
             pointPartStart, pointPartEnd = poseLine
             rangeStartAndEnd = self.findStartAndEnd(contourPoints, pointPartStart, pointPartStart, pointPartEnd)
             intervals.append((rangeStartAndEnd[0][0], rangeStartAndEnd[1][0]))
-            self.cutContours.append(self.getInterpolatePoints(contourPoints[rangeStartAndEnd[0][0]], contourPoints[rangeStartAndEnd[1][0]]))
+            cutContours.append(self.getInterpolatePoints(contourPoints[rangeStartAndEnd[0][0]], contourPoints[rangeStartAndEnd[1][0]]))
         
         
         trimmedBodyContour = []
@@ -144,7 +197,7 @@ class Util:
                     isBody = False
                     if not hasAddedParts[j]:
                         hasAddedParts[j] = True
-                        trimmedBodyContour.extend(self.cutContours[j])
+                        trimmedBodyContour.extend(cutContours[j])
             if isBody:
                 trimmedBodyContour.append(contourPoints[i])
                 
@@ -208,7 +261,46 @@ class Util:
           w2 = int((w - w0) * MInv[0][0] + (h - h0) * MInv[0][1] + w0)
           h2 = int((w - w0) * MInv[1][0] + (h - h0) * MInv[1][1] + h0)
           workImage[h, w] = inputImage[h2, w2] 
-  
+
+    def drawContourWithRotation2(self, contour, M1, M1Inv, w1, h1, M2, M2Inv, w2, h2, workImage, inputImage):
+      hMin = self.inHeight
+      hMax = -1
+    
+      contourRotate = []
+      for point in contour:
+        w, h = point
+        wRotate = int((w - w1) * M1[0][0] + (h - h1) * M1[0][1] + w1)
+        hRotate = int((w - w1) * M1[1][0] + (h - h1) * M1[1][1] + h1)
+        wRotate2 = int((wRotate - w2) * M2[0][0] + (hRotate - h2) * M2[0][1] + w2)
+        hRotate2 = int((wRotate - w2) * M2[1][0] + (hRotate - h2) * M2[1][1] + h2)
+        contourRotate.append((wRotate2, hRotate2))
+        if hRotate2 < hMin:
+          hMin = hRotate2
+        if hRotate2 > hMax:
+          hMax = hRotate2
+    
+        contourRotateRefine = []
+        for i in range(0, len(contourRotate) - 1):
+          for point in self.getInterpolatePoints(contourRotate[i], contourRotate[i+1]):
+            contourRotateRefine.append(point)
+
+      for h in range(hMin, hMax):
+        wMin = self.inWidth
+        wMax = -1
+        for point in contourRotate:
+          ww, hh = point
+          if hh == h:
+            if ww < wMin:
+              wMin = ww
+            if ww > wMax:
+              wMax = ww
+        for w in range(wMin, wMax):
+          wM2Inv = int((w - w2) * M2Inv[0][0] + (h - h2) * M2Inv[0][1] + w2)
+          hM2Inv = int((w - w2) * M2Inv[1][0] + (h - h2) * M2Inv[1][1] + h2)
+          wM1Inv = int((wM2Inv - w1) * M1Inv[0][0] + (hM2Inv - h1) * M1Inv[0][1] + w1)
+          hM1Inv = int((wM2Inv - w1) * M1Inv[1][0] + (hM2Inv - h1) * M1Inv[1][1] + h1)
+          workImage[h, w] = inputImage[hM1Inv, wM1Inv] 
+           
     def find45degree(self, contourPoints, targetPoint, startPoint, endPoint):
       w, h = targetPoint
       wStart, hStart = startPoint
@@ -288,9 +380,87 @@ class Util:
         MInv = cv2.getAffineTransform(refPair, inputPair)
         self.drawContourWithRotation(partWith45DegreeCut, M, MInv, w1, h1, workImage, inputImage)       
         
+    def rotatePart2(self, partUpperContour, partLowerContour, index, angleUpper, angleLower, workImage, inputImage):
+        upperCutContour = self.cutContours[index]
+        index45Degree = self.find45degree(partUpperContour, partUpperContour[0], partUpperContour[0], partUpperContour[len(upperCutContour) - 1])
+        
+        pointA = partUpperContour[index45Degree]
+        triangle = []
+        if abs(index45Degree - len(upperCutContour)) > len(partUpperContour) / 2 :
+          triangle.extend(upperCutContour)
+          triangle.extend(partUpperContour[index45Degree:])
+          triangle.extend(partUpperContour[:len(upperCutContour) - 1])
+        else:
+          triangle.extend(partUpperContour[:index45Degree])
+        
+        newLine = self.getInterpolatePoints(pointA, upperCutContour[0])
+        triangle.extend(newLine)
+        
+        w1, h1 = upperCutContour[0]
+        w2, h2 = upperCutContour[-1]
+        w3, h3 = pointA
+        inputPair = np.array( [[0, 0], [w2 - w1, h2 - h1], [w3 - w1, h3 - h1]] ).astype(np.float32)
+        refPair = np.array( [[0, 0], [w2 - w1, h2 - h1], [math.cos(angleUpper) * (w3 - w1) + math.sin(angleUpper) * (h3 - h1), -math.sin(angleUpper) * (w3 - w1) + math.cos(angleUpper) * (h3 - h1)]] ).astype(np.float32)
+        
+        M = cv2.getAffineTransform(inputPair, refPair)
+        MInv = cv2.getAffineTransform(refPair, inputPair)
+        self.drawContourWithRotation(triangle, M, MInv, w1, h1, workImage, inputImage)
+        
+        partWith45DegreeCut = []
+        partWith45DegreeCut.extend(partUpperContour[index45Degree:])
+        partWith45DegreeCut.extend(newLine)
+        inputPair = np.array( [[0, 0], [0, -1], [-1, 0]] ).astype(np.float32)
+        refPair = np.array( [[0, 0], [-math.sin(angleUpper), -math.cos(angleUpper)], [-math.cos(angleUpper), math.sin(angleUpper)]] ).astype(np.float32)
+        
+        M = cv2.getAffineTransform(inputPair, refPair)
+        MInv = cv2.getAffineTransform(refPair, inputPair)
+        self.drawContourWithRotation(partWith45DegreeCut, M, MInv, w1, h1, workImage, inputImage)          
+        
+        #------
+        lowerCutContour = self.cutContours[index + 1]
+        index45Degree = self.find45degree(partLowerContour, partLowerContour[0], partLowerContour[0], partLowerContour[len(lowerCutContour) - 1])
+        
+        pointA = partLowerContour[index45Degree]
+        triangle = []
+        if abs(index45Degree - len(lowerCutContour)) > len(partLowerContour) / 2 :
+          triangle.extend(lowerCutContour)
+          triangle.extend(partLowerContour[index45Degree:])
+          triangle.extend(partLowerContour[:len(lowerCutContour) - 1])
+        else:
+          triangle.extend(partLowerContour[:index45Degree])
+        
+        newLine = self.getInterpolatePoints(pointA, lowerCutContour[0])
+        triangle.extend(newLine)
+        
+        w1Lower, h1Lower = lowerCutContour[0]
+        w2Lower, h2Lower = lowerCutContour[-1]
+        w3Lower, h3Lower = pointA
+        inputPair = np.array( [[0, 0], [w2Lower - w1Lower, h2Lower - h1Lower], [w3Lower - w1Lower, h3Lower - h1Lower]] ).astype(np.float32)
+        refPair = np.array( [[0, 0], [w2Lower - w1Lower, h2Lower - h1Lower], [math.cos(angleLower) * (w3Lower - w1Lower) + math.sin(angleLower) * (h3Lower - h1Lower), -math.sin(angleLower) * (w3Lower - w1Lower) + math.cos(angleLower) * (h3Lower - h1Lower)]] ).astype(np.float32)
+        
+        w1Rotate = int((w1Lower - w1) * M[0][0] + (h1Lower - h1) * M[0][1] + w1)
+        h1Rotate = int((w1Lower - w1) * M[1][0] + (h1Lower - h1) * M[1][1] + h1)
+        M2 = cv2.getAffineTransform(inputPair, refPair)
+        M2Inv = cv2.getAffineTransform(refPair, inputPair)
+        self.drawContourWithRotation2(triangle, M, MInv, w1, h1, M2, M2Inv, w1Rotate, h1Rotate, workImage, inputImage)        
         
         
+        partWith45DegreeCut = []
+        if index45Degree > len(partLowerContour) / 2:
+            partWith45DegreeCut.extend(partLowerContour[:index45Degree])
+        else:
+            partWith45DegreeCut.extend(partLowerContour[index45Degree:])
+        partWith45DegreeCut.extend(newLine)
+        w4, h4 = lowerCutContour[0]
+        w4Rotate = int((w4 - w1) * M[0][0] + (h4 - h1) * M[0][1] + w1)
+        h4Rotate = int((w4 - w1) * M[1][0] + (h4 - h1) * M[1][1] + h1)
+        inputPair = np.array( [[0, 0], [0, -1], [-1, 0]] ).astype(np.float32)
+        refPair = np.array( [[0, 0], [-math.sin(angleLower), -math.cos(angleLower)], [-math.cos(angleLower), math.sin(angleLower)]] ).astype(np.float32)
         
+        M2 = cv2.getAffineTransform(inputPair, refPair)
+        M2Inv = cv2.getAffineTransform(refPair, inputPair)
+        
+        self.drawContourWithRotation2(partWith45DegreeCut, M, MInv, w1, h1, M2, M2Inv, w4Rotate, h4Rotate, workImage, inputImage)
         
         
         
